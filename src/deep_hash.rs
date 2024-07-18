@@ -12,7 +12,7 @@ use futures::{Stream, TryStream, TryStreamExt};
 
 pub enum DeepHashChunk<'a> {
     Chunk(Bytes),
-    Stream(&'a mut Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>>>>),
+    Stream(&'a mut Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>>),
     Chunks(Vec<DeepHashChunk<'a>>),
 }
 
