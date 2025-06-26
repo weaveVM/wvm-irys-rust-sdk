@@ -10,15 +10,19 @@ use crate::{
 };
 use futures::{Stream, TryStream, TryStreamExt};
 
-pub enum DeepHashChunk<'a> {
+pub enum DeepHashChunk {
     Chunk(Bytes),
-    Stream(&'a mut Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>>),
-    Chunks(Vec<DeepHashChunk<'a>>),
+    Stream(
+        std::sync::Arc<
+            tokio::sync::Mutex<Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + 'static>>>,
+        >,
+    ),
+    Chunks(Vec<DeepHashChunk>),
 }
 
 trait Foo: Stream<Item = anyhow::Result<Bytes>> + TryStream {}
 
-pub async fn deep_hash(chunk: DeepHashChunk<'_>) -> Result<Bytes, BundlrError> {
+pub async fn deep_hash(chunk: DeepHashChunk) -> Result<Bytes, BundlrError> {
     match chunk {
         DeepHashChunk::Chunk(b) => {
             let tag = [BLOB_AS_BUFFER, b.len().to_string().as_bytes()].concat();
@@ -26,14 +30,11 @@ pub async fn deep_hash(chunk: DeepHashChunk<'_>) -> Result<Bytes, BundlrError> {
             Ok(Bytes::copy_from_slice(&sha384hash(c.into())))
         }
         DeepHashChunk::Stream(s) => {
+            let mut guard = s.lock().await;
+            let mut s = guard.as_mut();
             let mut hasher = Sha384::new();
             let mut length = 0;
-            while let Some(chunk) = s
-                .as_mut()
-                .try_next()
-                .await
-                .map_err(|_| BundlrError::NoBytesLeft)?
-            {
+            while let Some(chunk) = s.try_next().await.map_err(|_| BundlrError::NoBytesLeft)? {
                 length += chunk.len();
                 hasher.update(&chunk);
             }
@@ -62,7 +63,7 @@ pub async fn deep_hash(chunk: DeepHashChunk<'_>) -> Result<Bytes, BundlrError> {
 
 #[async_recursion]
 pub async fn deep_hash_chunks(
-    chunks: &mut Vec<DeepHashChunk<'_>>,
+    chunks: &mut Vec<DeepHashChunk>,
     acc: Bytes,
 ) -> Result<Bytes, BundlrError> {
     if chunks.is_empty() {

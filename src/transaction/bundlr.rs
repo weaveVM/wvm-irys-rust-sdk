@@ -15,12 +15,18 @@ use crate::signers::Signer;
 use crate::tags::{AvroDecode, AvroEncode, Tag};
 use crate::utils::read_offset;
 
+#[derive(Clone)]
 enum Data {
     None,
     Bytes(Vec<u8>),
-    Stream(Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send>>),
+    Stream(
+        std::sync::Arc<
+            tokio::sync::Mutex<Pin<Box<dyn Stream<Item = anyhow::Result<Bytes>> + Send + 'static>>>,
+        >,
+    ),
 }
 
+#[derive(Clone)]
 pub struct BundlrTx {
     signature_type: SignerMap,
     signature: Vec<u8>,
@@ -161,7 +167,9 @@ impl BundlrTx {
         };
 
         Ok(BundlrTx {
-            data: Data::Stream(Box::pin(file_stream)),
+            data: Data::Stream(std::sync::Arc::new(tokio::sync::Mutex::new(Box::pin(
+                file_stream,
+            )))),
             ..bundlr_tx
         })
     }
@@ -260,7 +268,7 @@ impl BundlrTx {
                 ]))
             }
             Data::Stream(file_stream) => {
-                let data_chunk = DeepHashChunk::Stream(file_stream);
+                let data_chunk = DeepHashChunk::Stream(file_stream.clone());
                 let sig_type = &self.signature_type;
                 let sig_type_bytes = sig_type.as_u16().to_string().as_bytes().to_vec();
                 deep_hash(DeepHashChunk::Chunks(vec![
